@@ -12,6 +12,6 @@ opt-level = 'z'
 
 [dependencies]
 bevy = { version = "0.13", features = [ "wayland" ] }
-bytes = "1.6.0"
+bevy_mod_reqwest = "0.14.2"
 console_log = "1.0.0"
-reqwest = { version = "0.12.4", features = [ "blocking" ] }
+image = "0.24.9"

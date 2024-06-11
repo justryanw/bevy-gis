@@ -1,13 +1,7 @@
-use bevy::{
-    asset::AssetMetaCheck,
-    prelude::*,
-    render::{
-        render_asset::RenderAssetUsages,
-        texture::{CompressedImageFormats, ImageFormat, ImageSampler, ImageType},
-    },
-    tasks::{block_on, futures_lite::future, AsyncComputeTaskPool, Task},
+use bevy::{asset::AssetMetaCheck, prelude::*, render::render_asset::RenderAssetUsages};
+use bevy_mod_reqwest::{
+    bevy_eventlistener::callbacks::ListenerInput, BevyReqwest, On, ReqResponse, ReqwestPlugin,
 };
-use bytes::Bytes;
 
 fn main() {
     console_log::init().expect("Error initialising logger");
@@ -15,51 +9,60 @@ fn main() {
     App::new()
         .insert_resource(ClearColor(Color::BLACK))
         .insert_resource(AssetMetaCheck::Never)
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window {
-                title: "Bevy GIS".to_string(),
-                canvas: Some("#bevy".to_owned()),
-                prevent_default_event_handling: false,
+        .add_plugins((
+            DefaultPlugins.set(WindowPlugin {
+                primary_window: Some(Window {
+                    title: "Bevy GIS".to_string(),
+                    canvas: Some("#bevy".to_owned()),
+                    prevent_default_event_handling: false,
+                    ..default()
+                }),
                 ..default()
             }),
-            ..default()
-        }))
+            ReqwestPlugin::default(),
+        ))
+        .add_event::<FetchTile>()
         .add_systems(Startup, setup)
         .add_systems(Update, (rotate, spawn_tile))
         .run();
 }
 
-#[derive(Component)]
-struct FetchTile(Task<Bytes>);
+#[derive(Debug, Event)]
+pub struct FetchTile(Image);
 
-fn spawn_tile(
-    mut commands: Commands,
-    asset_server: Res<AssetServer>,
-    mut fetch_tasks: Query<&mut FetchTile>,
-) {
-    for mut task in &mut fetch_tasks {
-        if let Some(bytes) = block_on(future::poll_once(&mut task.0)) {
-            let image = Image::from_buffer(
-                &bytes,
-                ImageType::Format(ImageFormat::Jpeg),
-                CompressedImageFormats::NONE,
-                false,
-                ImageSampler::linear(),
-                RenderAssetUsages::RENDER_WORLD | RenderAssetUsages::MAIN_WORLD,
-            )
-            .expect("Failed to get image from bytes");
+impl From<ListenerInput<ReqResponse>> for FetchTile {
+    fn from(value: ListenerInput<ReqResponse>) -> Self {
+        let bytes = value.body();
 
-            let texture_handle = asset_server.add(image);
+        let dyn_image = image::load_from_memory(bytes).expect("cant load image");
 
-            commands.spawn(SpriteBundle {
-                texture: texture_handle,
-                ..default()
-            });
-        }
+        let image = Image::from_dynamic(
+            dyn_image,
+            true,
+            RenderAssetUsages::RENDER_WORLD | RenderAssetUsages::MAIN_WORLD,
+        );
+
+        FetchTile(image)
     }
 }
 
-fn setup(mut commands: Commands) {
+fn spawn_tile(
+    mut events: EventReader<FetchTile>,
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+) {
+    for tile in events.read() {
+        // TODO .clone() not ideal
+        let texture_handle = asset_server.add(tile.0.clone());
+
+        commands.spawn(SpriteBundle {
+            texture: texture_handle,
+            ..default()
+        });
+    }
+}
+
+fn setup(mut commands: Commands, mut bevyreq: BevyReqwest) {
     commands.spawn(Camera2dBundle::default());
 
     let token = "AAPK8175dc0aa561421eaf15ccaa1827be79lHuQeBbDSktmG6Zc3-ntUn2kaBPPCyYTcO_4y2cmWx-NRq9ta6ERQVDJPJbsqm4_";
@@ -71,23 +74,13 @@ fn setup(mut commands: Commands) {
 
     let full_url = format!("{server_url}/tile/{zoom}/{y}/{x}?token={token}");
 
-    let thread_pool = AsyncComputeTaskPool::get();
+    let request = bevyreq
+        .client()
+        .get(full_url)
+        .build()
+        .expect("Failed to build request");
+    bevyreq.send(request, On::send_event::<FetchTile>())
 
-    let entity = commands.spawn_empty().id();
-    let task = thread_pool.spawn(async move {
-        let response = reqwest::get(full_url).await.expect("Failed to fetch tile");
-        response
-            .bytes()
-            .await
-            .expect("Failed to read bytes from response")
-    });
-
-    commands.entity(entity).insert(FetchTile(task));
-
-    // commands.spawn(SpriteBundle {
-    //     texture: asset_server.load("bevy.png"),
-    //     ..default()
-    // });
 }
 
 fn rotate(mut query: Query<&mut Transform, With<Sprite>>, time: Res<Time>) {
