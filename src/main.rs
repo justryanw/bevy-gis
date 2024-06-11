@@ -1,7 +1,5 @@
 use bevy::{asset::AssetMetaCheck, prelude::*, render::render_asset::RenderAssetUsages};
-use bevy_mod_reqwest::{
-    bevy_eventlistener::callbacks::ListenerInput, BevyReqwest, On, ReqResponse, ReqwestPlugin,
-};
+use bevy_mod_reqwest::{BevyReqwest, Listener, On, ReqResponse, ReqwestPlugin};
 
 fn main() {
     console_log::init().expect("Error initialising logger");
@@ -21,45 +19,28 @@ fn main() {
             }),
             ReqwestPlugin::default(),
         ))
-        .add_event::<FetchTile>()
         .add_systems(Startup, setup)
-        .add_systems(Update, (rotate, spawn_tile))
+        .add_systems(Update, rotate)
         .run();
 }
 
-#[derive(Debug, Event)]
-pub struct FetchTile(Image);
+fn fetch_tile(req: Listener<ReqResponse>, mut commands: Commands, asset_server: Res<AssetServer>) {
+    let bytes = req.body();
 
-impl From<ListenerInput<ReqResponse>> for FetchTile {
-    fn from(value: ListenerInput<ReqResponse>) -> Self {
-        let bytes = value.body();
+    let dyn_image = image::load_from_memory(bytes).expect("cant load image");
 
-        let dyn_image = image::load_from_memory(bytes).expect("cant load image");
+    let image = Image::from_dynamic(
+        dyn_image,
+        true,
+        RenderAssetUsages::RENDER_WORLD | RenderAssetUsages::MAIN_WORLD,
+    );
 
-        let image = Image::from_dynamic(
-            dyn_image,
-            true,
-            RenderAssetUsages::RENDER_WORLD | RenderAssetUsages::MAIN_WORLD,
-        );
+    let texture_handle = asset_server.add(image);
 
-        FetchTile(image)
-    }
-}
-
-fn spawn_tile(
-    mut events: EventReader<FetchTile>,
-    mut commands: Commands,
-    asset_server: Res<AssetServer>,
-) {
-    for tile in events.read() {
-        // TODO .clone() not ideal
-        let texture_handle = asset_server.add(tile.0.clone());
-
-        commands.spawn(SpriteBundle {
-            texture: texture_handle,
-            ..default()
-        });
-    }
+    commands.spawn(SpriteBundle {
+        texture: texture_handle,
+        ..default()
+    });
 }
 
 fn setup(mut commands: Commands, mut bevyreq: BevyReqwest) {
@@ -79,8 +60,8 @@ fn setup(mut commands: Commands, mut bevyreq: BevyReqwest) {
         .get(full_url)
         .build()
         .expect("Failed to build request");
-    bevyreq.send(request, On::send_event::<FetchTile>())
 
+    bevyreq.send(request, On::run(fetch_tile));
 }
 
 fn rotate(mut query: Query<&mut Transform, With<Sprite>>, time: Res<Time>) {
