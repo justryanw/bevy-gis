@@ -59,6 +59,7 @@
             pkg-config
             clang
             mold
+            openssl
           ]);
 
           buildInputs = (with pkgs; [
