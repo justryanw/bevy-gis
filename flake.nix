@@ -122,6 +122,7 @@
           checks = self.checks.${system};
 
           RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
+          RUSTFLAGS = "--cfg=web_sys_unstable_apis";
 
           packages = [
             pkgs.trunk
