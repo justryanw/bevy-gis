@@ -6,6 +6,7 @@ use bevy_inspector_egui::quick::WorldInspectorPlugin;
 use bevy_mod_reqwest::{
     bevy_eventlistener::callbacks::ListenerInput, BevyReqwest, On, ReqResponse, ReqwestPlugin,
 };
+use bevy_pancam::{PanCam, PanCamPlugin};
 
 fn main() {
     console_log::init().expect("Error initialising logger");
@@ -25,6 +26,7 @@ fn main() {
             }),
             ReqwestPlugin::default(),
             WorldInspectorPlugin::new(),
+            PanCamPlugin::default(),
         ))
         .add_systems(Startup, setup)
         .add_systems(Update, digest_image)
@@ -42,27 +44,32 @@ struct TilePos {
 }
 
 fn setup(mut commands: Commands, mut bevyreq: BevyReqwest) {
-    commands.spawn(Camera2dBundle::default());
+    commands
+        .spawn(Camera2dBundle::default())
+        .insert(PanCam::default());
 
     let token = "AAPK8175dc0aa561421eaf15ccaa1827be79lHuQeBbDSktmG6Zc3-ntUn2kaBPPCyYTcO_4y2cmWx-NRq9ta6ERQVDJPJbsqm4_";
     let server_url =
         "https://ibasemaps-api.arcgis.com/arcgis/rest/services/World_Imagery/MapServer";
 
-    vec![(0, 0), (0, 1), (1, 0), (1, 1)].into_iter().for_each(|(x, y)| {
-        let zoom = 1;
+    let zoom = 6;
+    let pow = 2i32.pow(zoom as u32);
 
-        let full_url = format!("{server_url}/tile/{zoom}/{y}/{x}?token={token}");
+    for x in 0..pow {
+        for y in 0..pow {
+            let full_url = format!("{server_url}/tile/{zoom}/{y}/{x}?token={token}");
 
-        let request = bevyreq
-            .client()
-            .get(full_url)
-            .build()
-            .expect("Failed to build request");
+            let request = bevyreq
+                .client()
+                .get(full_url)
+                .build()
+                .expect("Failed to build request");
 
-        let entity = commands.spawn(TilePos { zoom, y, x }).id();
+            let entity = commands.spawn(TilePos { zoom, y, x }).id();
 
-        bevyreq.send_using_entity(entity, request, On::target_commands_mut(parse_image));
-    });
+            bevyreq.send_using_entity(entity, request, On::target_commands_mut(parse_image));
+        }
+    }
 }
 
 fn parse_image(req: &mut ListenerInput<ReqResponse>, entity_commands: &mut EntityCommands) {
@@ -88,16 +95,18 @@ fn digest_image(
         // TODO remove clone
         let texture_handle = asset_server.add(image.0.clone());
 
-        let sprite_size = 400.;
+        let map_size = 800.;
+        let sprite_size = map_size / 2f32.powf(tile_pos.zoom as f32);
+        let offset = (sprite_size - map_size) / 2.;
 
         commands
             .entity(entity)
             .insert(SpriteBundle {
                 texture: texture_handle,
                 transform: Transform::from_xyz(
-                    tile_pos.x as f32 * sprite_size,
-                    -tile_pos.y as f32 * sprite_size + sprite_size / 2.,
-                    0. + sprite_size / 2. - sprite_size / 2.,
+                    tile_pos.x as f32 * sprite_size + offset,
+                    -tile_pos.y as f32 * sprite_size - offset,
+                    0.,
                 ),
                 sprite: Sprite {
                     custom_size: Some(Vec2::splat(sprite_size)),
