@@ -46,13 +46,19 @@ struct TilePos {
 fn setup(mut commands: Commands, mut bevyreq: BevyReqwest) {
     commands
         .spawn(Camera2dBundle::default())
-        .insert(PanCam::default());
+        .insert(PanCam { 
+            min_x: Some(-1000.),
+            max_x: Some(1000.),
+            min_y: Some(-1000.),
+            max_y: Some(1000.),
+            ..default()
+        });
 
     let token = "AAPK8175dc0aa561421eaf15ccaa1827be79lHuQeBbDSktmG6Zc3-ntUn2kaBPPCyYTcO_4y2cmWx-NRq9ta6ERQVDJPJbsqm4_";
     let server_url =
         "https://ibasemaps-api.arcgis.com/arcgis/rest/services/World_Imagery/MapServer";
 
-    let zoom = 6;
+    let zoom = 4;
     let pow = 2i32.pow(zoom as u32);
 
     for x in 0..pow {
@@ -95,7 +101,7 @@ fn digest_image(
         // TODO remove clone
         let texture_handle = asset_server.add(image.0.clone());
 
-        let map_size = 800.;
+        let map_size = 2000.;
         let sprite_size = map_size / 2f32.powf(tile_pos.zoom as f32);
         let offset = (sprite_size - map_size) / 2.;
 
