@@ -10,9 +10,10 @@ fn main() {
     console_log::init().expect("Error initialising logger");
 
     App::new()
-        .insert_resource(AsyncTaskPool(SyncCell::new(vec![])))
         .insert_resource(ClearColor(Color::BLACK))
         .insert_resource(AssetMetaCheck::Never)
+        .insert_resource(TaskQueue(vec![]))
+        .insert_resource(CompleteTasks(vec![]))
         .add_plugins((
             DefaultPlugins.set(WindowPlugin {
                 primary_window: Some(Window {
@@ -26,8 +27,8 @@ fn main() {
             WorldInspectorPlugin::new(),
             PanCamPlugin::default(),
         ))
-        .add_systems(Startup, setup)
-        .add_systems(Update, system1)
+        .add_systems(Startup, (setup, system1))
+        .add_systems(Update, system2)
         .run();
 }
 
@@ -156,27 +157,46 @@ fn setup(
 // }
 
 #[derive(Resource)]
-pub struct MyAnswer(Option<u64>);
+pub struct TaskQueue(Vec<u64>);
 
-fn system1(mut task_pool: AsyncTaskPool<u64>, my_res: ResMut<MyAnswer>) {
-    if task_pool.is_idle() {
-        println!("Queueing 5 tasks...");
-        for i in 1..=5 {
-            task_pool.spawn(async move {
-                sleep(Duration::from_millis(i * 1000)).await;
-                i
-            });
-        }
-    }
+#[derive(Resource)]
+pub struct CompleteTasks(Vec<u64>);
 
-    
-
+fn system1(mut task_queue: ResMut<TaskQueue>) {
+    task_queue.0 = (0..100).collect();
 }
 
-fn system2(mut task_pool: AsyncTaskPool<u64>) {
-    for status in task_pool.iter_poll() {
-        if let AsyncTaskStatus::Finished(t) = status {
-            info!("Received {t}");
+fn system2(
+    mut task_pool: AsyncTaskPool<u64>,
+    mut task_queue: ResMut<TaskQueue>,
+    mut complete_tasks: ResMut<CompleteTasks>,
+) {
+    let pending = task_pool.iter_poll().fold(0, |acc, status| match status {
+        AsyncTaskStatus::Pending => acc + 1,
+        AsyncTaskStatus::Finished(data) => {
+            info!("Received {data}");
+            complete_tasks.0.push(data);
+            acc
         }
+        _ => acc,
+    });
+
+    let max_tasks = 5;
+
+    if pending >= max_tasks || pending == 0 {
+        return;
+    };
+
+    info!("test numbers {} {max_tasks} {pending}", task_queue.0.len());
+
+    let len = task_queue.0.len();
+    let index = len - (max_tasks - pending).min(len);
+
+    for i in task_queue.0.split_off(index) {
+        task_pool.spawn(async move {
+            sleep(Duration::from_millis(50)).await;
+            info!("test {i}");
+            i
+        });
     }
 }
