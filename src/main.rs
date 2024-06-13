@@ -1,10 +1,11 @@
 use std::time::Duration;
 
 use async_std::task::sleep;
-use bevy::{asset::AssetMetaCheck, prelude::*, utils::synccell::SyncCell};
+use bevy::{asset::AssetMetaCheck, prelude::*};
 use bevy_async_task::{AsyncTaskPool, AsyncTaskStatus};
 use bevy_inspector_egui::quick::WorldInspectorPlugin;
 use bevy_pancam::{PanCam, PanCamPlugin};
+use rand::random;
 
 fn main() {
     console_log::init().expect("Error initialising logger");
@@ -32,19 +33,19 @@ fn main() {
         .run();
 }
 
-struct ImageToDigest(Image);
+// struct ImageToDigest(Image);
 
-struct TilePos {
-    zoom: i32,
-    y: i32,
-    x: i32,
-}
+// struct TilePos {
+//     zoom: i32,
+//     y: i32,
+//     x: i32,
+// }
 
-#[derive(Component)]
-struct TileTask {
-    tile_pos: TilePos,
-    image: ImageToDigest,
-}
+// #[derive(Component)]
+// struct TileTask {
+//     tile_pos: TilePos,
+//     image: ImageToDigest,
+// }
 
 // #[derive(Resource)]
 // struct TileTaskPool<'a>(AsyncTaskPool<'a, TileTask>);
@@ -181,21 +182,19 @@ fn system2(
         _ => acc,
     });
 
-    let max_tasks = 5;
+    let max_concurrent_tasks = 5;
+    let remaining_tasks = task_queue.0.len();
 
-    if pending >= max_tasks || pending == 0 {
+    if pending >= max_concurrent_tasks || remaining_tasks == 0 {
         return;
     };
 
-    info!("test numbers {} {max_tasks} {pending}", task_queue.0.len());
-
-    let len = task_queue.0.len();
-    let index = len - (max_tasks - pending).min(len);
+    let index = remaining_tasks - (max_concurrent_tasks - pending).min(remaining_tasks);
 
     for i in task_queue.0.split_off(index) {
         task_pool.spawn(async move {
-            sleep(Duration::from_millis(50)).await;
-            info!("test {i}");
+            let time = (random::<f32>() * 1000. + 500.) as u64;
+            sleep(Duration::from_millis(time)).await;
             i
         });
     }
