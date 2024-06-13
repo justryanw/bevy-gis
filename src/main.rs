@@ -1,7 +1,4 @@
-use bevy::{
-    asset::AssetMetaCheck, prelude::*,
-    render::render_asset::RenderAssetUsages,
-};
+use bevy::{asset::AssetMetaCheck, prelude::*, render::render_asset::RenderAssetUsages};
 use bevy_async_task::{AsyncTaskPool, AsyncTaskStatus};
 use bevy_inspector_egui::quick::WorldInspectorPlugin;
 use bevy_pancam::{PanCam, PanCamPlugin};
@@ -27,10 +24,11 @@ fn main() {
             PanCamPlugin::default(),
         ))
         .add_systems(Startup, setup)
-        .add_systems(Update, tile_system)
+        .add_systems(Update, (tile_system, sort_by_distance))
         .run();
 }
 
+#[derive(Debug, Clone)]
 struct TilePos {
     zoom: i32,
     y: i32,
@@ -45,10 +43,7 @@ struct Tile {
 #[derive(Resource)]
 pub struct TaskQueue(Vec<TilePos>);
 
-fn setup(
-    mut commands: Commands,
-    mut task_queue: ResMut<TaskQueue>,
-) {
+fn setup(mut commands: Commands, mut task_queue: ResMut<TaskQueue>) {
     commands.spawn(Camera2dBundle::default()).insert(PanCam {
         min_x: Some(-1000.),
         max_x: Some(1000.),
@@ -56,7 +51,6 @@ fn setup(
         max_y: Some(1000.),
         ..default()
     });
-
 
     let zoom = 6;
     let pow = 2i32.pow(zoom as u32);
@@ -66,14 +60,30 @@ fn setup(
             task_queue.0.push(TilePos { zoom, y, x });
         }
     }
+}
 
-    task_queue.0.iter().map(|tile_pos| {
-        let dist = Vec2::splat(pow as f32 / 2.).distance(Vec2::ZERO);
-        (tile_pos, dist)
+fn sort_by_distance(
+    mut task_queue: ResMut<TaskQueue>,
+) {
+    task_queue.0.sort_unstable_by(|a, b| {
+        convert_pos(b)
+            .distance(Vec2::ZERO)
+            .partial_cmp(&convert_pos(a).distance(Vec2::ZERO))
+            .unwrap()
     });
+}
 
-    
+fn convert_pos(tile_pos: &TilePos) -> Vec2 {
+    let TilePos { zoom, y, x } = tile_pos.to_owned();
 
+    let map_size = 2000.;
+    let sprite_size = map_size / 2f32.powf(zoom as f32);
+    let offset = (sprite_size - map_size) / 2.;
+
+    Vec2::new(
+        x as f32 * sprite_size + offset,
+        -y as f32 * sprite_size - offset,
+    )
 }
 
 fn tile_system(
@@ -87,19 +97,14 @@ fn tile_system(
         AsyncTaskStatus::Finished(tile) => {
             let texture_handle = asset_server.add(tile.image.clone());
 
-            let TilePos { zoom, y, x } = tile.tile_pos;
+            let Vec2 { x, y } = convert_pos(&tile.tile_pos);
 
             let map_size = 2000.;
-            let sprite_size = map_size / 2f32.powf(zoom as f32);
-            let offset = (sprite_size - map_size) / 2.;
+            let sprite_size = map_size / 2f32.powf(tile.tile_pos.zoom as f32);
 
             commands.spawn(SpriteBundle {
                 texture: texture_handle,
-                transform: Transform::from_xyz(
-                    x as f32 * sprite_size + offset,
-                    -y as f32 * sprite_size - offset,
-                    0.,
-                ),
+                transform: Transform::from_xyz(x, y, 0.),
                 sprite: Sprite {
                     custom_size: Some(Vec2::splat(sprite_size)),
                     ..default()
