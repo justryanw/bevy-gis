@@ -66,6 +66,14 @@ fn setup(
             task_queue.0.push(TilePos { zoom, y, x });
         }
     }
+
+    task_queue.0.iter().map(|tile_pos| {
+        let dist = Vec2::splat(pow as f32 / 2.).distance(Vec2::ZERO);
+        (tile_pos, dist)
+    });
+
+    
+
 }
 
 fn tile_system(
