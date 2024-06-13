@@ -64,11 +64,16 @@ fn setup(mut commands: Commands, mut task_queue: ResMut<TaskQueue>) {
 
 fn sort_by_distance(
     mut task_queue: ResMut<TaskQueue>,
+    query: Query<&Transform, With<PanCam>>
 ) {
+    let transform = query.single();
+
+    let cam_pos = Vec2::new(transform.translation.x, transform.translation.y);
+
     task_queue.0.sort_unstable_by(|a, b| {
         convert_pos(b)
-            .distance(Vec2::ZERO)
-            .partial_cmp(&convert_pos(a).distance(Vec2::ZERO))
+            .distance(cam_pos)
+            .partial_cmp(&convert_pos(a).distance(cam_pos))
             .unwrap()
     });
 }
