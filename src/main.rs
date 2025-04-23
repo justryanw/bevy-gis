@@ -1,9 +1,10 @@
+use std::collections::HashMap;
+
 use bevy::{asset::AssetMetaCheck, prelude::*, render::render_asset::RenderAssetUsages};
 use bevy_async_task::{AsyncTaskPool, AsyncTaskStatus};
-use bevy_inspector_egui::quick::WorldInspectorPlugin;
 use bevy_pancam::{PanCam, PanCamPlugin};
 
-#[derive(Debug, Clone, Component, PartialEq)]
+#[derive(Debug, Clone, Component, PartialEq, Eq, Hash)]
 struct TilePos {
     zoom: i32,
     y: i32,
@@ -15,11 +16,15 @@ struct Tile {
     image: Image,
 }
 
-#[derive(Resource, Debug)]
-pub struct TaskQueue(Vec<TilePos>);
+#[derive(Debug, PartialEq, Eq)]
+enum TileStatus {
+    Queued,
+    Pending,
+    Complete(Entity),
+}
 
-#[derive(Resource)]
-pub struct PendingTasks(Vec<TilePos>);
+#[derive(Resource, Debug)]
+pub struct Tiles(HashMap<TilePos, TileStatus>);
 
 fn main() {
     console_log::init().expect("Error initialising logger");
@@ -27,8 +32,7 @@ fn main() {
     App::new()
         .insert_resource(ClearColor(Color::BLACK))
         .insert_resource(AssetMetaCheck::Never)
-        .insert_resource(TaskQueue(vec![]))
-        .insert_resource(PendingTasks(vec![]))
+        .insert_resource(Tiles(HashMap::new()))
         .add_plugins((
             DefaultPlugins.set(WindowPlugin {
                 primary_window: Some(Window {
@@ -39,18 +43,15 @@ fn main() {
                 }),
                 ..default()
             }),
-            WorldInspectorPlugin::new(),
+            // WorldInspectorPlugin::new(),
             PanCamPlugin::default(),
         ))
         .add_systems(Startup, setup)
-        .add_systems(
-            Update,
-            (spawn_system, sort_by_distance, tile_system).chain(),
-        )
+        .add_systems(Update, (spawn_system, tile_system).chain())
         .run();
 }
 
-fn setup(mut commands: Commands, mut task_queue: ResMut<TaskQueue>) {
+fn setup(mut commands: Commands) {
     commands.spawn(Camera2dBundle::default()).insert(PanCam {
         min_x: Some(-1000.),
         max_x: Some(1000.),
@@ -58,69 +59,34 @@ fn setup(mut commands: Commands, mut task_queue: ResMut<TaskQueue>) {
         max_y: Some(1000.),
         ..default()
     });
-
-    let zoom = 4;
-    let pow = 2i32.pow(zoom as u32);
-
-    // TODO replace with spawn system
-    // for x in 0..pow {
-    //     for y in 0..pow {
-    //         task_queue.0.push(TilePos { zoom, y, x });
-    //     }
-    // }
 }
 
 fn spawn_system(
     query: Query<(&OrthographicProjection, &Transform), With<PanCam>>,
-    mut gizmos: Gizmos,
-    mut task_queue: ResMut<TaskQueue>,
-    pending_tasks: Res<PendingTasks>,
-    tile_query: Query<&TilePos>,
+    mut tiles: ResMut<Tiles>,
 ) {
     let (otho_projection, transform) = query.single();
     let (min, max) = swap_rect_y(otho_projection.area);
     let cam_pos = transform.translation.xy();
 
-    // gizmos.circle_2d(min + cam_pos, 100., Color::RED);
-    // gizmos.circle_2d(max + cam_pos, 100., Color::BLUE);
+    let ratio = 2000. / otho_projection.area.height();
+    let max_zoom = ((4. + ratio.log2()) as i32).clamp(1, 20);
 
-    task_queue.0 = vec![];
+    // info!("height {} {} {}", height, ch, otho_projection.area.height());
 
-    let height = ((50. / (min.y - max.y).log2()) as i32).clamp(1, 16);
-
-    info!("height {}", height);
-
-    for zoom in 1..height {
+    for zoom in 1..max_zoom {
         let min_tile = wolrd_to_tile_pos(min + cam_pos, zoom).floor();
         let max_tile = wolrd_to_tile_pos(max + cam_pos, zoom).ceil();
-        // info!("min {} max {}", min_tile, max_tile);
-
-        let tile_min = tile_to_world_pos(min_tile, zoom);
-        let tile_max = tile_to_world_pos(max_tile, zoom);
-        // info!("min {} max {}", tile_min, tile_max);
-
-        let snapped_rect = Rect::from_corners(tile_min, tile_max);
-
-        // gizmos.rect_2d(snapped_rect.center(), 0., snapped_rect.size(), Color::GREEN);
 
         for x in (min_tile.x as i32)..(max_tile.x as i32) {
             for y in (min_tile.y as i32)..(max_tile.y as i32) {
                 let tile_pos = TilePos { zoom, y, x };
-                if pending_tasks.0.contains(&tile_pos) {
+                if tiles.0.contains_key(&tile_pos) {
                     continue;
                 };
-                // if task_queue.0.contains(&tile_pos) {
-                //     continue;
-                // }
-                if tile_query.iter().find(|&t| *t == tile_pos).is_some() {
-                    continue;
-                }
-                // info!("tilepos {:?}", tile_pos);
-                task_queue.0.push(tile_pos.clone());
+                tiles.0.insert(tile_pos.clone(), TileStatus::Queued);
             }
         }
-
-        // info!("cam pos {}", cam_pos);
     }
 }
 
@@ -141,32 +107,6 @@ fn wolrd_to_tile_pos(wold_pos: Vec2, zoom: i32) -> Vec2 {
     .clamp(Vec2::ZERO, Vec2::splat(pow))
 }
 
-fn tile_to_world_pos(tile_pos: Vec2, zoom: i32) -> Vec2 {
-    let map_size = 2000.;
-    let pow = 2f32.powf(zoom as f32);
-    let sprite_size = map_size / pow;
-    Vec2::new(
-        (tile_pos.x - pow / 2.) * sprite_size,
-        -(tile_pos.y - pow / 2.) * sprite_size,
-    )
-}
-
-fn sort_by_distance(mut task_queue: ResMut<TaskQueue>, query: Query<&Transform, With<PanCam>>) {
-    let transform = query.single();
-
-    let cam_pos = Vec2::new(transform.translation.x, transform.translation.y);
-
-    task_queue.0.sort_by(|a, b| {
-        a.zoom.cmp(&b.zoom).then_with(|| {
-            let dist_b = convert_pos(b).0.distance(cam_pos);
-            let dist_a = convert_pos(a).0.distance(cam_pos);
-            dist_a.partial_cmp(&dist_b).unwrap()
-        })
-    });
-
-    // info!("{:?}", task_queue);
-}
-
 fn convert_pos(tile_pos: &TilePos) -> (Vec2, f32) {
     let TilePos { zoom, y, x } = tile_pos.to_owned();
 
@@ -185,61 +125,88 @@ fn convert_pos(tile_pos: &TilePos) -> (Vec2, f32) {
 
 fn tile_system(
     mut task_pool: AsyncTaskPool<Tile>,
-    mut task_queue: ResMut<TaskQueue>,
-    mut pending_tasks: ResMut<PendingTasks>,
     mut commands: Commands,
     asset_server: Res<AssetServer>,
+    mut tiles: ResMut<Tiles>,
+    query: Query<&Transform, With<PanCam>>,
 ) {
-    let pending = task_pool.iter_poll().fold(0, |acc, status| match status {
-        AsyncTaskStatus::Pending => acc + 1,
+    let transform = query.single();
+    let cam_pos = Vec2::new(transform.translation.x, transform.translation.y);
+
+    task_pool.iter_poll().for_each(|status| match status {
         AsyncTaskStatus::Finished(tile) => {
             let texture_handle = asset_server.add(tile.image);
 
             let (Vec2 { x, y }, sprite_size) = convert_pos(&tile.tile_pos);
 
-            pending_tasks.0.retain(|value| *value != tile.tile_pos);
-
-            commands.spawn((
-                SpriteBundle {
-                    texture: texture_handle,
-                    transform: Transform::from_xyz(x, y, tile.tile_pos.zoom as f32),
-                    sprite: Sprite {
-                        custom_size: Some(Vec2::splat(sprite_size)),
+            let entity = commands
+                .spawn((
+                    SpriteBundle {
+                        texture: texture_handle,
+                        transform: Transform::from_xyz(x, y, tile.tile_pos.zoom as f32),
+                        sprite: Sprite {
+                            custom_size: Some(Vec2::splat(sprite_size)),
+                            ..default()
+                        },
                         ..default()
                     },
-                    ..default()
-                },
-                tile.tile_pos,
-            ));
+                    tile.tile_pos.clone(),
+                ))
+                .id();
 
-            acc
+            tiles
+                .0
+                .insert(tile.tile_pos.clone(), TileStatus::Complete(entity));
         }
-        _ => acc,
+        _ => (),
+    });
+
+    let mut queued = 0;
+    let mut pending = 0;
+    let mut task_queue: Vec<TilePos> = vec![];
+
+    tiles.0.iter().for_each(|(k, v)| match v {
+        TileStatus::Queued => {
+            queued += 1;
+            task_queue.push(k.clone());
+        }
+        TileStatus::Pending => {
+            pending += 1;
+        }
+        _ => (),
+    });
+
+    task_queue.sort_by(|a, b| {
+        a.zoom.cmp(&b.zoom).then_with(|| {
+            let dist_b = convert_pos(b).0.distance(cam_pos);
+            let dist_a = convert_pos(a).0.distance(cam_pos);
+            dist_a.partial_cmp(&dist_b).unwrap()
+        })
     });
 
     let max_concurrent_tasks = 10;
-    let remaining_tasks = task_queue.0.len();
 
-    if pending >= max_concurrent_tasks || remaining_tasks == 0 {
+    if pending >= max_concurrent_tasks || queued == 0 {
         return;
     };
 
-    let index = (max_concurrent_tasks - pending).min(remaining_tasks);
+    let index = (max_concurrent_tasks - pending).min(queued);
 
-    for tile_pos in task_queue.0.split_at(index).0 {
+    for tile_pos in task_queue.split_at(index).0 {
         let tile_pos = tile_pos.clone();
         let TilePos { zoom, y, x } = tile_pos;
-        pending_tasks.0.push(tile_pos.clone());
+
+        tiles.0.insert(tile_pos.clone(), TileStatus::Pending);
 
         task_pool.spawn(async move {
-         	// Ersi
+            // Ersi
             let token = "AAPK8175dc0aa561421eaf15ccaa1827be79lHuQeBbDSktmG6Zc3-ntUn2kaBPPCyYTcO_4y2cmWx-NRq9ta6ERQVDJPJbsqm4_";
             let server_url = "https://ibasemaps-api.arcgis.com/arcgis/rest/services/World_Imagery/MapServer";
             let full_url = format!("{server_url}/tile/{zoom}/{y}/{x}?token={token}");
 
             // OSM
             // let server_url = "https://tile.openstreetmap.org";
-            // let full_url = format!("{server_url}/{zoom}/{y}/{x}");
+            // let full_url = format!("{server_url}/{zoom}/{x}/{y}.png");
 
             let bytes = reqwest::get(&full_url)
                 .await
