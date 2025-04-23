@@ -64,15 +64,34 @@ fn setup(mut commands: Commands) {
 fn spawn_system(
     query: Query<(&OrthographicProjection, &Transform), With<PanCam>>,
     mut tiles: ResMut<Tiles>,
+    mut world_tiles: Query<&mut Visibility, With<TilePos>>,
 ) {
     let (otho_projection, transform) = query.single();
     let (min, max) = swap_rect_y(otho_projection.area);
     let cam_pos = transform.translation.xy();
 
     let ratio = 2000. / otho_projection.area.height();
-    let max_zoom = ((4. + ratio.log2()) as i32).clamp(1, 20);
+    let max_zoom = ((3. + ratio.log2()) as i32).clamp(1, 20);
 
     // info!("height {} {} {}", height, ch, otho_projection.area.height());
+
+    tiles.0.retain(|tile_pos, status| {
+        let within_view = tile_pos.zoom < max_zoom;
+        match status {
+            TileStatus::Queued => within_view,
+            TileStatus::Complete(e) => {
+                if let Ok(mut vis) = world_tiles.get_mut(*e) {
+                    *vis = if within_view {
+                        Visibility::Inherited
+                    } else {
+                        Visibility::Hidden
+                    };
+                }
+                true
+            }
+            _ => true,
+        }
+    });
 
     for zoom in 1..max_zoom {
         let min_tile = wolrd_to_tile_pos(min + cam_pos, zoom).floor();
