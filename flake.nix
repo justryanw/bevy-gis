@@ -3,7 +3,6 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
-
     # The version of wasm-bindgen-cli needs to match the version in Cargo.lock
     nixpkgs-for-wasm-bindgen.url = "github:NixOS/nixpkgs/57d6973abba7ea108bac64ae7629e7431e0199b6";
 
