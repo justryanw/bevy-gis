@@ -78,7 +78,7 @@ fn spawn_system(
     tiles.0.retain(|tile_pos, status| {
         let within_view = tile_pos.zoom < max_zoom;
         match status {
-            TileStatus::Queued => within_view,
+            TileStatus::Queued => false,
             TileStatus::Complete(e) => {
                 if let Ok(mut vis) = world_tiles.get_mut(*e) {
                     *vis = if within_view {
@@ -229,10 +229,10 @@ fn tile_system(
 
             let bytes = reqwest::get(&full_url)
                 .await
-                .unwrap()
+                .expect("Failed to get request")
                 .bytes()
                 .await
-                .unwrap();
+                .expect("Failed to get bytes from request");
 
             let dyn_image = image::load_from_memory(&bytes).expect("cant load image");
 
