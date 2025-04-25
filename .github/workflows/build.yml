@@ -31,7 +31,7 @@ jobs:
         with:
           fail-mode: true
       - name: Build
-        run: nix develop -c trunk build
+        run: nix develop --accept-flake-config -c trunk build
       - name: Setup Pages
         uses: actions/configure-pages@main
       - name: Upload artifact
