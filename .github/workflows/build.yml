@@ -2,7 +2,7 @@ name: Builds
 
 on:
   push:
-    branches: ['**']
+    branches: ["**"]
 
   workflow_dispatch:
 
@@ -16,9 +16,9 @@ concurrency:
 
 jobs:
   build:
-    name: 'Build'
+    name: "Build"
     environment:
-      name: 'Build'
+      name: "Build"
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -29,18 +29,14 @@ jobs:
         uses: DeterminateSystems/flake-checker-action@main
         with:
           fail-mode: true
-      - name: Setup nixbuild
-        uses: nixbuild/nixbuild-action@v20
-        with:
-          nixbuild_token: ${{ secrets.NIXBUILD_TOKEN }}
-          generate_summary_for: 'workflow'
       - name: Build
-        run: |
-          nix build \
-            --print-build-logs \
-            --builders "" \
-            --max-jobs 100 \
-            --eval-store auto \
-            --store ssh-ng://eu.nixbuild.net \
-            --accept-flake-config \
-            .
+        run: nix develop -c trunk build
+      - name: Setup Pages
+        uses: actions/configure-pages@main
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@main
+        with:
+          path: "./dist"
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@main
