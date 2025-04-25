@@ -1,130 +1,129 @@
 {
-  description = "Build a cargo project";
+  nixConfig = {
+    extra-trusted-public-keys = "justryanw.cachix.org-1:oan1YuatPBqGNFEflzCmB+iwLPtzq1S1LivN3hUzu60=";
+    extra-substituters = "https://justryanw.cachix.org";
+    allow-import-from-derivation = true;
+  };
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
-    # The version of wasm-bindgen-cli needs to match the version in Cargo.lock
-    nixpkgs-for-wasm-bindgen.url = "github:NixOS/nixpkgs/57d6973abba7ea108bac64ae7629e7431e0199b6";
 
-    crane = {
-      url = "github:ipetkov/crane";
-      inputs.nixpkgs.follows = "nixpkgs";
+    flake-parts = {
+      url = "github:hercules-ci/flake-parts";
+      inputs.nixpkgs-lib.follows = "nixpkgs";
     };
 
-    flake-utils.url = "github:numtide/flake-utils";
-
-    rust-overlay = {
-      url = "github:oxalica/rust-overlay";
-      inputs = {
-        nixpkgs.follows = "nixpkgs";
-        flake-utils.follows = "flake-utils";
-      };
+    crate2nix = {
+      url = "github:nix-community/crate2nix";
+      inputs.nixpkgs.follows = "nixpkgs";
     };
   };
 
-  outputs = { self, nixpkgs, crane, flake-utils, rust-overlay, nixpkgs-for-wasm-bindgen, ... }:
-    flake-utils.lib.eachDefaultSystem (system:
-      let
-        pkgs = import nixpkgs {
-          inherit system;
-          overlays = [ (import rust-overlay) ];
-        };
+  outputs = {
+    flake-parts,
+    crate2nix,
+    ...
+  } @ inputs:
+    flake-parts.lib.mkFlake {inherit inputs;} {
+      systems = [
+        "x86_64-linux"
+        "aarch64-linux"
+        "x86_64-darwin"
+        "aarch64-darwin"
+      ];
 
-        inherit (pkgs) lib;
-
-        rustToolchain = pkgs.rust-bin.stable.latest.default.override {
-          targets = [ "wasm32-unknown-unknown" ];
-        };
-        craneLib = ((crane.mkLib pkgs).overrideToolchain rustToolchain).overrideScope (_final: _prev: {
-          inherit (import nixpkgs-for-wasm-bindgen { inherit system; }) wasm-bindgen-cli;
-        });
-
-        src = lib.cleanSourceWith {
-          src = ./.;
-          filter = path: type:
-            (lib.hasSuffix "\.html" path) ||
-            (lib.hasSuffix "\.scss" path) ||
-            (lib.hasInfix "/assets/" path) ||
-            (craneLib.filterCargoSources path type)
-          ;
-        };
-
-        commonArgs = {
-          inherit src;
-          strictDeps = true;
-          CARGO_BUILD_TARGET = "wasm32-unknown-unknown";
-
-          nativeBuildInputs = (with pkgs; [
-            pkg-config
-            clang
-            mold
-            openssl
-          ]);
-
-          buildInputs = (with pkgs; [
-            libxkbcommon
-            alsa-lib
-            udev
-            vulkan-loader
-            wayland
-          ]) ++ lib.optionals pkgs.stdenv.isDarwin [
-            pkgs.libiconv
-          ];
-        };
-
-        # Build just the cargo dependencies, so we can reuse all of that work (e.g. via cachix) when running in CI
-        cargoArtifacts = craneLib.buildDepsOnly (commonArgs // {
-          # You cannot run cargo test on a wasm build
-          doCheck = false;
-        });
-
-        # Build the actual crate itself, reusing the dependency artifacts from above.
-        # This derivation is a directory you can put on a webserver.
-        my-app = craneLib.buildTrunkPackage (commonArgs // {
-          inherit cargoArtifacts;
-          # The version of wasm-bindgen-cli here must match the one from Cargo.lock.
-          wasm-bindgen-cli = pkgs.wasm-bindgen-cli.override {
-            version = "0.2.92";
-            hash = "sha256-1VwY8vQy7soKEgbki4LD+v259751kKxSxmo/gqE6yV0=";
-            cargoHash = "sha256-aACJ+lYNEU8FFBs158G1/JG8sc6Rq080PeKCMnwdpH0=";
+      perSystem = {
+        pkgs,
+        lib,
+        system,
+        ...
+      }: let
+        systemDeps =
+          builtins.attrValues {
+            inherit
+              (pkgs)
+              libxkbcommon
+              alsa-lib
+              udev
+              vulkan-loader
+              wayland
+              ;
+          }
+          ++ builtins.attrValues {
+            inherit
+              (pkgs.xorg)
+              libXcursor
+              libXrandr
+              libXi
+              libX11
+              ;
           };
-        });
 
-        serve-app = pkgs.writeShellScriptBin "serve-app" ''
-          ${pkgs.python3Minimal}/bin/python3 -m http.server --directory ${my-app} 8000
-        '';
-      in
-      {
-        checks = {
-          # Build the crate as part of `nix flake check` for convenience
-          inherit my-app;
+        name = "bevy-gis";
 
-          my-app-clippy = craneLib.cargoClippy (commonArgs // {
-            inherit cargoArtifacts;
-            cargoClippyExtraArgs = "--all-targets -- --deny warnings";
-          });
+        crateOverrides =
+          pkgs.defaultCrateOverrides
+          // {
+            wayland-sys = atts: {
+              nativeBuildInputs = [pkgs.pkg-config];
+              buildInputs = [pkgs.wayland];
+            };
 
-          # Check formatting
-          my-app-fmt = craneLib.cargoFmt {
-            inherit src;
+            ${name} = attrs: {
+              name = "${name}-${attrs.version}";
+
+              nativeBuildInputs = builtins.attrValues {
+                inherit (pkgs) makeWrapper mold;
+              };
+
+              postInstall = ''
+                wrapProgram $out/bin/${name} \
+                  --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath systemDeps} \
+                  --prefix XCURSOR_THEME : "Adwaita"
+                mkdir -p $out/bin/assets
+                cp -a assets $out/bin
+              '';
+            };
           };
+
+        cargoNix =
+          pkgs.callPackage
+          (crate2nix.tools.${system}.generatedCargoNix {
+            inherit name;
+            src = ./.;
+          })
+          {
+            defaultCrateOverrides = crateOverrides;
+          };
+      in {
+        packages = {
+          default = cargoNix.rootCrate.build;
         };
 
-        packages.default = my-app;
-
-        # nix run .#serve
-        apps.serve = flake-utils.lib.mkApp {
-          drv = serve-app;
-        };
-
-        devShells.default = craneLib.devShell {
-          checks = self.checks.${system};
+        devShells.default = pkgs.mkShell {
+          buildInputs =
+            systemDeps
+            ++ builtins.attrValues {
+              inherit
+                (pkgs)
+                cargo
+                rustc
+                pkg-config
+                rustfmt
+                clang
+                mold
+                cargo-watch
+                cargo-edit
+                nix-output-monitor
+                trunk
+                lld
+                ;
+            };
 
           RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
-
-          packages = [
-            pkgs.trunk
-          ];
+          LD_LIBRARY_PATH = "${pkgs.lib.makeLibraryPath systemDeps}";
+          XCURSOR_THEME = "Adwaita";
         };
-      });
+      };
+    };
 }
