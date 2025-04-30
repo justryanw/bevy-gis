@@ -1,7 +1,7 @@
 {
   nixConfig = {
-    extra-trusted-public-keys = "justryanw.cachix.org-1:oan1YuatPBqGNFEflzCmB+iwLPtzq1S1LivN3hUzu60=";
-    extra-substituters = "https://justryanw.cachix.org";
+    extra-trusted-public-keys = "nixbuild.net/ACT8PT-1:xsXpIjcF8wW2pTTAaNYZzfDNcYZkG7ICcY+/o5tNCGE=";
+    extra-substituters = "ssh://eu.nixbuild.net";
     allow-import-from-derivation = true;
   };
 

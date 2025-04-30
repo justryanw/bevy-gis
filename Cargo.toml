@@ -11,3 +11,4 @@ opt-level = 3
 
 [dependencies]
 bevy = { version = "0.16", features = ["wayland"] }
+bevy_mod_reqwest = "0.19.2"
